@@ -1,9 +1,4 @@
-# 📄 README.md — Versi Singkat (1/3 Panjang)
-
-```markdown
 # 🤖 Streamlit Pertama — Belajar Web ML + MongoDB
-
-[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://aisuryafsmuksw.streamlit.app)
 
 Aplikasi Machine Learning interaktif dengan **Streamlit** + **MongoDB Atlas** untuk CRUD data dan retraining model.
 
@@ -101,5 +96,5 @@ Python 3.12 · Streamlit · scikit-learn · MongoDB Atlas · matplotlib · seabo
 ---
 
 🤖 **Dibuat dengan ❤️ menggunakan Streamlit + scikit-learn + MongoDB**
-```
+
 
