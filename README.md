@@ -17,6 +17,7 @@ Project belajar membuat WEB Machine Learning dengan Streamlit.
 ## 📦 Instalasi
 ```bash
 pip install -r requirements.txt
+```
 
 ## 📦 Deploy
 https://aisuryafsmuksw.streamlit.app/
