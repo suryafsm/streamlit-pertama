@@ -181,3 +181,10 @@ cython_debug/
 .cursorindexingignore
 
 .vscode/
+
+# Streamlit secrets
+.streamlit/secrets.toml
+.streamlit/
+
+test_mongo.py
+retrain_iris.py

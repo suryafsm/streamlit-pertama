@@ -1,6 +1,6 @@
 # ============================================================
 # APLIKASI MACHINE LEARNING DENGAN STREAMLIT
-# Regresi & Klasifikasi - Toy Datasets dari scikit-learn
+# Regresi & Klasifikasi + MongoDB CRUD + Retrain
 # ============================================================
 
 # --- Import library ---
@@ -11,38 +11,33 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import warnings
 import time
+from datetime import datetime
 
-# Scikit-learn: datasets
+# Scikit-learn
 from sklearn import datasets
 from sklearn.model_selection import train_test_split, cross_val_score
-
-# Scikit-learn: model regresi
-from sklearn.linear_model import LinearRegression, Ridge, Lasso
-from sklearn.tree import DecisionTreeRegressor
-from sklearn.ensemble import RandomForestRegressor
-
-# Scikit-learn: model klasifikasi
-from sklearn.linear_model import LogisticRegression
+from sklearn.linear_model import LinearRegression, Ridge, Lasso, LogisticRegression
+from sklearn.tree import DecisionTreeRegressor, DecisionTreeClassifier
+from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier
 from sklearn.neighbors import KNeighborsClassifier
-from sklearn.tree import DecisionTreeClassifier
-from sklearn.ensemble import RandomForestClassifier
 from sklearn.svm import SVC
-
-# Scikit-learn: metrics
 from sklearn.metrics import (
-    mean_absolute_error,
-    mean_squared_error,
-    r2_score,
+    mean_absolute_error, mean_squared_error, r2_score,
     mean_absolute_percentage_error,
-    accuracy_score,
-    precision_score,
-    recall_score,
-    f1_score,
-    classification_report,
-    confusion_matrix,
+    accuracy_score, precision_score, recall_score, f1_score,
+    classification_report, confusion_matrix,
 )
 
-# Filter warnings biar output bersih
+# MongoDB
+try:
+    import pymongo
+    from pymongo import MongoClient
+    from bson.objectid import ObjectId
+    MONGO_AVAILABLE = True
+except ImportError:
+    MONGO_AVAILABLE = False
+
+# Filter warnings
 warnings.filterwarnings("ignore")
 
 # --- Konfigurasi halaman ---
@@ -55,28 +50,39 @@ st.set_page_config(
 
 
 # ============================================================
+# KONEKSI MONGODB
+# ============================================================
+@st.cache_resource
+def get_mongo_client():
+    """Koneksi ke MongoDB Atlas."""
+    if not MONGO_AVAILABLE:
+        return None
+    try:
+        uri = st.secrets["MONGODB_URI"]
+        client = MongoClient(uri)
+        client.admin.command("ping")
+        return client
+    except Exception:
+        return None
+
+
+# ============================================================
 # FUNGSI: Load Dataset dari sklearn
 # ============================================================
 @st.cache_data
 def load_dataset(nama_dataset, task):
-    """
-    Load dataset sklearn berdasarkan nama dan jenis task.
-    Return: X (fitur), y (target), feature_names, target_names
-    """
+    """Load dataset sklearn sesuai task."""
     if task == "Regresi":
         if nama_dataset == "Diabetes":
             data = datasets.load_diabetes()
         elif nama_dataset == "California Housing":
             data = datasets.fetch_california_housing()
         else:
-            raise ValueError(f"Dataset regresi '{nama_dataset}' tidak dikenali.")
-
-        X = data.data
-        y = data.target
+            raise ValueError(f"Dataset '{nama_dataset}' tidak dikenali.")
+        X, y = data.data, data.target
         feature_names = list(data.feature_names)
         target_names = ["target"]
-
-    else:  # Klasifikasi
+    else:
         if nama_dataset == "Iris":
             data = datasets.load_iris()
         elif nama_dataset == "Wine":
@@ -86,25 +92,21 @@ def load_dataset(nama_dataset, task):
         elif nama_dataset == "Digits":
             data = datasets.load_digits()
         else:
-            raise ValueError(f"Dataset klasifikasi '{nama_dataset}' tidak dikenali.")
-
-        X = data.data
-        y = data.target
+            raise ValueError(f"Dataset '{nama_dataset}' tidak dikenali.")
+        X, y = data.data, data.target
         feature_names = list(data.feature_names)
-        # Untuk Digits, target_names = angka 0-9
-        if hasattr(data, "target_names"):
-            target_names = list(data.target_names)
-        else:
-            target_names = [str(i) for i in np.unique(y)]
-
+        target_names = (
+            list(data.target_names) if hasattr(data, "target_names")
+            else [str(i) for i in np.unique(y)]
+        )
     return X, y, feature_names, target_names
 
 
 # ============================================================
-# FUNGSI: Ambil Model berdasarkan Nama
+# FUNGSI: Ambil Model
 # ============================================================
 def get_model(nama_model, task):
-    """Return instance model sklearn sesuai nama."""
+    """Return instance model sklearn."""
     if task == "Regresi":
         models = {
             "Linear Regression": LinearRegression(),
@@ -113,7 +115,7 @@ def get_model(nama_model, task):
             "Decision Tree": DecisionTreeRegressor(random_state=42),
             "Random Forest": RandomForestRegressor(n_estimators=100, random_state=42),
         }
-    else:  # Klasifikasi
+    else:
         models = {
             "Logistic Regression": LogisticRegression(max_iter=1000, random_state=42),
             "K-Nearest Neighbors": KNeighborsClassifier(),
@@ -121,34 +123,31 @@ def get_model(nama_model, task):
             "Random Forest": RandomForestClassifier(n_estimators=100, random_state=42),
             "Support Vector Machine": SVC(probability=True, random_state=42),
         }
-
     return models.get(nama_model)
 
 
 # ============================================================
-# HEADER APLIKASI
+# HEADER
 # ============================================================
 st.title("🤖 REGRESI / KLASIFIKASI MACHINE LEARNING")
-st.caption("Aplikasi demo Machine Learning menggunakan dataset dari scikit-learn")
+st.caption("Aplikasi demo ML + MongoDB CRUD + Retrain dengan scikit-learn")
 
 st.divider()
 
 
 # ============================================================
-# SIDEBAR: Pengaturan
+# SIDEBAR
 # ============================================================
 with st.sidebar:
     st.header("⚙️ Pengaturan Model")
     st.caption("Atur parameter di bawah, lalu klik **Train Model**")
 
-    # 1. Pilih task
     task = st.radio(
         "🎯 Pilih Jenis Model",
         options=["Regresi", "Klasifikasi"],
         horizontal=True,
     )
 
-    # 2. Pilih dataset (berubah sesuai task)
     if task == "Regresi":
         dataset_options = ["Diabetes", "California Housing"]
     else:
@@ -156,48 +155,23 @@ with st.sidebar:
 
     nama_dataset = st.selectbox("📊 Pilih Dataset", options=dataset_options)
 
-    # 3. Pilih model
     if task == "Regresi":
         model_options = [
-            "Linear Regression",
-            "Ridge Regression",
-            "Lasso Regression",
-            "Decision Tree",
-            "Random Forest",
+            "Linear Regression", "Ridge Regression", "Lasso Regression",
+            "Decision Tree", "Random Forest",
         ]
     else:
         model_options = [
-            "Logistic Regression",
-            "K-Nearest Neighbors",
-            "Decision Tree",
-            "Random Forest",
-            "Support Vector Machine",
+            "Logistic Regression", "K-Nearest Neighbors", "Decision Tree",
+            "Random Forest", "Support Vector Machine",
         ]
 
     nama_model = st.selectbox("🧠 Pilih Model", options=model_options)
 
-    # 4. Test size slider
-    test_size = st.slider(
-        "📐 Test Size",
-        min_value=0.1,
-        max_value=0.5,
-        value=0.2,
-        step=0.05,
-        help="Proporsi data untuk testing (0.2 = 20%)",
-    )
-
-    # 5. Random state
-    random_state = st.number_input(
-        "🎲 Random State",
-        min_value=0,
-        max_value=9999,
-        value=42,
-        step=1,
-    )
+    test_size = st.slider("📐 Test Size", 0.1, 0.5, 0.2, 0.05)
+    random_state = st.number_input("🎲 Random State", 0, 9999, 42, 1)
 
     st.divider()
-
-    # 6. Tombol Train
     train_button = st.button("🚀 Train Model", use_container_width=True, type="primary")
 
     st.divider()
@@ -205,68 +179,42 @@ with st.sidebar:
 
 
 # ============================================================
-# SESSION STATE: simpan hasil training
+# SESSION STATE
 # ============================================================
-if "is_trained" not in st.session_state:
-    st.session_state.is_trained = False
-if "model" not in st.session_state:
-    st.session_state.model = None
-if "X_train" not in st.session_state:
-    st.session_state.X_train = None
-if "X_test" not in st.session_state:
-    st.session_state.X_test = None
-if "y_train" not in st.session_state:
-    st.session_state.y_train = None
-if "y_test" not in st.session_state:
-    st.session_state.y_test = None
-if "y_pred" not in st.session_state:
-    st.session_state.y_pred = None
-if "metrics" not in st.session_state:
-    st.session_state.metrics = {}
-if "cv_score" not in st.session_state:
-    st.session_state.cv_score = None
-if "task" not in st.session_state:
-    st.session_state.task = None
-if "nama_dataset" not in st.session_state:
-    st.session_state.nama_dataset = None
-if "nama_model" not in st.session_state:
-    st.session_state.nama_model = None
-if "target_names" not in st.session_state:
-    st.session_state.target_names = None
-if "feature_names" not in st.session_state:
-    st.session_state.feature_names = None
-if "train_time" not in st.session_state:
-    st.session_state.train_time = None
+defaults = {
+    "is_trained": False, "model": None, "X_train": None, "X_test": None,
+    "y_train": None, "y_test": None, "y_pred": None, "metrics": {},
+    "cv_score": None, "task": None, "nama_dataset": None, "nama_model": None,
+    "target_names": None, "feature_names": None, "train_time": None,
+}
+for k, v in defaults.items():
+    if k not in st.session_state:
+        st.session_state[k] = v
 
 
 # ============================================================
-# PROSES TRAINING (saat tombol diklik)
+# PROSES TRAINING
 # ============================================================
 if train_button:
     try:
-        # Load dataset
         with st.spinner("📥 Memuat dataset..."):
             X, y, feature_names, target_names = load_dataset(nama_dataset, task)
 
-        # Split data
         X_train, X_test, y_train, y_test = train_test_split(
             X, y, test_size=test_size, random_state=random_state
         )
 
-        # Ambil model
         model = get_model(nama_model, task)
         if model is None:
             st.error(f"❌ Model '{nama_model}' tidak ditemukan.")
             st.stop()
 
-        # Training
         with st.spinner(f"🧠 Training {nama_model}..."):
             t0 = time.time()
             model.fit(X_train, y_train)
             y_pred = model.predict(X_test)
             train_time = time.time() - t0
 
-        # Hitung metrics
         metrics = {}
         if task == "Regresi":
             metrics["MAE"] = mean_absolute_error(y_test, y_pred)
@@ -276,39 +224,26 @@ if train_button:
             metrics["MAPE"] = mean_absolute_percentage_error(y_test, y_pred)
         else:
             metrics["Accuracy"] = accuracy_score(y_test, y_pred)
-            metrics["Precision"] = precision_score(
-                y_test, y_pred, average="weighted", zero_division=0
-            )
-            metrics["Recall"] = recall_score(
-                y_test, y_pred, average="weighted", zero_division=0
-            )
-            metrics["F1-Score"] = f1_score(
-                y_test, y_pred, average="weighted", zero_division=0
-            )
+            metrics["Precision"] = precision_score(y_test, y_pred, average="weighted", zero_division=0)
+            metrics["Recall"] = recall_score(y_test, y_pred, average="weighted", zero_division=0)
+            metrics["F1-Score"] = f1_score(y_test, y_pred, average="weighted", zero_division=0)
 
-        # Cross-validation (5-fold)
         with st.spinner("🔄 Cross-validation 5-fold..."):
             cv_scores = cross_val_score(model, X, y, cv=5)
             cv_score = (cv_scores.mean(), cv_scores.std())
 
         # Simpan ke session_state
-        st.session_state.is_trained = True
-        st.session_state.model = model
-        st.session_state.X_train = X_train
-        st.session_state.X_test = X_test
-        st.session_state.y_train = y_train
-        st.session_state.y_test = y_test
-        st.session_state.y_pred = y_pred
-        st.session_state.metrics = metrics
-        st.session_state.cv_score = cv_score
-        st.session_state.task = task
-        st.session_state.nama_dataset = nama_dataset
-        st.session_state.nama_model = nama_model
-        st.session_state.target_names = target_names
-        st.session_state.feature_names = feature_names
-        st.session_state.train_time = train_time
+        st.session_state.update({
+            "is_trained": True, "model": model,
+            "X_train": X_train, "X_test": X_test,
+            "y_train": y_train, "y_test": y_test, "y_pred": y_pred,
+            "metrics": metrics, "cv_score": cv_score,
+            "task": task, "nama_dataset": nama_dataset, "nama_model": nama_model,
+            "target_names": target_names, "feature_names": feature_names,
+            "train_time": train_time,
+        })
 
-        st.success(f"✅ Model berhasil ditraining dalam {train_time:.3f} detik!")
+        st.success(f"✅ Model ditraining dalam {train_time:.3f} detik!")
 
     except Exception as e:
         st.error(f"❌ Terjadi error: {e}")
@@ -316,57 +251,49 @@ if train_button:
 
 
 # ============================================================
-# BODY: Tampilkan hasil
+# BODY — Info Ringkas
 # ============================================================
 if not st.session_state.is_trained:
-    # Belum training
     st.info(
-        "👈 **Silakan atur parameter di sidebar, lalu klik tombol `🚀 Train Model`** "
+        "👈 **Silakan atur parameter di sidebar, lalu klik `🚀 Train Model`** "
         "untuk memulai training."
     )
 
-    # Placeholder info
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.markdown("### 📊 Dataset")
-        st.write("Pilih dari toy datasets scikit-learn")
-    with col2:
-        st.markdown("### 🧠 Model")
-        st.write("5 model regresi & 5 model klasifikasi")
-    with col3:
-        st.markdown("### 📈 Evaluasi")
-        st.write("Metrics lengkap + visualisasi")
-
-    st.stop()
-
-
-# --- Info dataset di atas tab ---
-task = st.session_state.task
-nama_dataset = st.session_state.nama_dataset
-nama_model = st.session_state.nama_model
-
-col1, col2, col3, col4 = st.columns(4)
+col1, col2, col3 = st.columns(3)
 with col1:
-    st.metric("🎯 Task", task)
+    st.markdown("### 📊 Dataset")
+    st.write("Pilih dari toy datasets scikit-learn")
 with col2:
-    st.metric("📊 Dataset", nama_dataset)
+    st.markdown("### 🧠 Model")
+    st.write("5 model regresi & 5 model klasifikasi")
 with col3:
-    st.metric("🧠 Model", nama_model)
-with col4:
-    st.metric("⏱️ Training Time", f"{st.session_state.train_time:.3f}s")
+    st.markdown("### 📈 Evaluasi")
+    st.write("Metrics + visualisasi + MongoDB CRUD")
 
 st.divider()
 
-# --- Tabs ---
-tab1, tab2 = st.tabs(["📊 Training & Visualisasi", "📈 Evaluation Metrics"])
+
+# ============================================================
+# 3 TABS
+# ============================================================
+tab1, tab2, tab3 = st.tabs([
+    "📊 Training & Visualisasi",
+    "📈 Evaluation Metrics",
+    "🗄️ Database & Retrain",
+])
 
 
 # ============================================================
-# TAB 1: Training & Visualisasi
+# TAB 1: TRAINING & VISUALISASI
 # ============================================================
 with tab1:
+    if not st.session_state.is_trained:
+        st.warning("⚠️ Klik **Train Model** dulu di sidebar.")
+        st.stop()
+
     st.subheader("📊 Hasil Visualisasi")
 
+    task = st.session_state.task
     X_train = st.session_state.X_train
     X_test = st.session_state.X_test
     y_test = st.session_state.y_test
@@ -375,7 +302,6 @@ with tab1:
     target_names = st.session_state.target_names
     model = st.session_state.model
 
-    # Info ringkas
     col1, col2 = st.columns(2)
     with col1:
         st.info(f"**Data Training:** {X_train.shape[0]} sampel")
@@ -384,163 +310,102 @@ with tab1:
 
     st.divider()
 
-    # ============ VISUALISASI REGRESI ============
+    # ============ REGRESI ============
     if task == "Regresi":
         col_a, col_b = st.columns(2)
 
-        # Grafik 1: Scatter Actual vs Predicted
         with col_a:
             st.markdown("#### 📈 Actual vs Predicted (Scatter)")
             fig, ax = plt.subplots(figsize=(6, 5))
             ax.scatter(y_test, y_pred, alpha=0.5, color="#1f77b4", edgecolor="k", s=40)
-
-            # Garis diagonal (perfect prediction)
             min_val = min(y_test.min(), y_pred.min())
             max_val = max(y_test.max(), y_pred.max())
-            ax.plot(
-                [min_val, max_val],
-                [min_val, max_val],
-                "r--",
-                lw=2,
-                label="Perfect Prediction",
-            )
-            ax.set_xlabel("Nilai Aktual")
-            ax.set_ylabel("Nilai Prediksi")
+            ax.plot([min_val, max_val], [min_val, max_val], "r--", lw=2, label="Perfect")
+            ax.set_xlabel("Aktual")
+            ax.set_ylabel("Prediksi")
             ax.set_title("Actual vs Predicted")
             ax.legend()
             ax.grid(True, alpha=0.3)
             st.pyplot(fig)
             plt.close(fig)
 
-        # Grafik 2: Line per Index
         with col_b:
             st.markdown("#### 📉 Perbandingan per Index (50 pertama)")
             fig, ax = plt.subplots(figsize=(6, 5))
-            n_show = min(50, len(y_test))
-            ax.plot(
-                range(n_show),
-                np.array(y_test)[:n_show],
-                marker="o",
-                label="Actual",
-                color="#1f77b4",
-                linewidth=2,
-            )
-            ax.plot(
-                range(n_show),
-                np.array(y_pred)[:n_show],
-                marker="x",
-                label="Predicted",
-                color="#ff7f0e",
-                linewidth=2,
-            )
+            n = min(50, len(y_test))
+            ax.plot(range(n), np.array(y_test)[:n], marker="o", label="Actual", color="#1f77b4")
+            ax.plot(range(n), np.array(y_pred)[:n], marker="x", label="Predicted", color="#ff7f0e")
             ax.set_xlabel("Index")
             ax.set_ylabel("Nilai")
-            ax.set_title("Actual vs Predicted per Index")
+            ax.set_title("Actual vs Predicted")
             ax.legend()
             ax.grid(True, alpha=0.3)
             st.pyplot(fig)
             plt.close(fig)
 
-        # Residual plot (bonus)
         st.markdown("#### 📊 Residual Plot")
         fig, ax = plt.subplots(figsize=(10, 4))
         residuals = np.array(y_test) - np.array(y_pred)
         ax.scatter(y_pred, residuals, alpha=0.5, color="#2ca02c", edgecolor="k")
         ax.axhline(y=0, color="red", linestyle="--", lw=2)
-        ax.set_xlabel("Nilai Prediksi")
-        ax.set_ylabel("Residual (Actual - Predicted)")
-        ax.set_title("Residual Plot — Semakin acak, semakin baik")
+        ax.set_xlabel("Prediksi")
+        ax.set_ylabel("Residual")
+        ax.set_title("Residual Plot")
         ax.grid(True, alpha=0.3)
         st.pyplot(fig)
         plt.close(fig)
 
-    # ============ VISUALISASI KLASIFIKASI ============
+    # ============ KLASIFIKASI ============
     else:
         col_a, col_b = st.columns(2)
 
-        # Grafik 1: Confusion Matrix
         with col_a:
             st.markdown("#### 🎯 Confusion Matrix")
             cm = confusion_matrix(y_test, y_pred)
             fig, ax = plt.subplots(figsize=(6, 5))
-            sns.heatmap(
-                cm,
-                annot=True,
-                fmt="d",
-                cmap="Blues",
-                xticklabels=target_names,
-                yticklabels=target_names,
-                ax=ax,
-                cbar_kws={"label": "Jumlah"},
-            )
+            sns.heatmap(cm, annot=True, fmt="d", cmap="Blues",
+                        xticklabels=target_names, yticklabels=target_names, ax=ax)
             ax.set_xlabel("Prediksi")
             ax.set_ylabel("Aktual")
-            ax.set_title("Confusion Matrix")
             st.pyplot(fig)
             plt.close(fig)
 
-        # Grafik 2: Feature Importance (kalau model mendukung)
         with col_b:
             st.markdown("#### 🌟 Feature Importance")
             if hasattr(model, "feature_importances_"):
-                importances = model.feature_importances_
-                idx = np.argsort(importances)
-
+                imp = model.feature_importances_
+                idx = np.argsort(imp)
                 fig, ax = plt.subplots(figsize=(6, 5))
-                ax.barh(
-                    range(len(idx)),
-                    importances[idx],
-                    color="#ff7f0e",
-                    edgecolor="k",
-                )
+                ax.barh(range(len(idx)), imp[idx], color="#ff7f0e", edgecolor="k")
                 ax.set_yticks(range(len(idx)))
                 ax.set_yticklabels([feature_names[i] for i in idx])
                 ax.set_xlabel("Importance")
-                ax.set_title("Feature Importance")
                 ax.grid(True, alpha=0.3, axis="x")
                 st.pyplot(fig)
                 plt.close(fig)
             elif hasattr(model, "coef_"):
-                # Untuk Logistic Regression / SVM linear
                 coef = np.abs(model.coef_)
                 if coef.ndim > 1:
                     coef = coef.mean(axis=0)
                 idx = np.argsort(coef)
-
                 fig, ax = plt.subplots(figsize=(6, 5))
                 ax.barh(range(len(idx)), coef[idx], color="#ff7f0e", edgecolor="k")
                 ax.set_yticks(range(len(idx)))
                 ax.set_yticklabels([feature_names[i] for i in idx])
-                ax.set_xlabel("|Coefficient|")
-                ax.set_title("Feature Coefficient (abs)")
-                ax.grid(True, alpha=0.3, axis="x")
                 st.pyplot(fig)
                 plt.close(fig)
             else:
-                st.info(
-                    "ℹ️ Model ini tidak menyediakan feature importance "
-                    "(contoh: KNN, SVM dengan kernel RBF)."
-                )
-
-        # Distribusi kelas
-        st.markdown("#### 📊 Distribusi Kelas (Data Testing)")
-        fig, ax = plt.subplots(figsize=(10, 3))
-        unique, counts = np.unique(y_test, return_counts=True)
-        labels = [target_names[i] if i < len(target_names) else str(i) for i in unique]
-        ax.bar(labels, counts, color="#1f77b4", edgecolor="k")
-        ax.set_xlabel("Kelas")
-        ax.set_ylabel("Jumlah")
-        ax.set_title("Distribusi Kelas di Data Testing")
-        for i, v in enumerate(counts):
-            ax.text(i, v + 0.5, str(v), ha="center", fontweight="bold")
-        st.pyplot(fig)
-        plt.close(fig)
+                st.info("ℹ️ Model ini tidak menyediakan feature importance.")
 
 
 # ============================================================
-# TAB 2: Evaluation Metrics
+# TAB 2: EVALUATION METRICS
 # ============================================================
 with tab2:
+    if not st.session_state.is_trained:
+        st.warning("⚠️ Klik **Train Model** dulu di sidebar.")
+        st.stop()
+
     st.subheader("📈 Evaluation Metrics")
 
     metrics = st.session_state.metrics
@@ -548,123 +413,216 @@ with tab2:
     y_test = st.session_state.y_test
     y_pred = st.session_state.y_pred
     cv_score = st.session_state.cv_score
+    target_names = st.session_state.target_names
 
     if task == "Regresi":
-        # Metric cards
-        col1, col2, col3, col4, col5 = st.columns(5)
-        with col1:
-            st.metric("📏 MAE", f"{metrics['MAE']:.4f}")
-        with col2:
-            st.metric("📐 MSE", f"{metrics['MSE']:.4f}")
-        with col3:
-            st.metric("📊 RMSE", f"{metrics['RMSE']:.4f}")
-        with col4:
-            st.metric("🎯 R² Score", f"{metrics['R2']:.4f}")
-        with col5:
-            st.metric("📉 MAPE", f"{metrics['MAPE']*100:.2f}%")
+        c1, c2, c3, c4, c5 = st.columns(5)
+        c1.metric("📏 MAE", f"{metrics['MAE']:.4f}")
+        c2.metric("📐 MSE", f"{metrics['MSE']:.4f}")
+        c3.metric("📊 RMSE", f"{metrics['RMSE']:.4f}")
+        c4.metric("🎯 R²", f"{metrics['R2']:.4f}")
+        c5.metric("📉 MAPE", f"{metrics['MAPE']*100:.2f}%")
 
         st.divider()
-
-        # Interpretasi R²
         r2 = metrics["R2"]
         if r2 >= 0.9:
-            st.success(f"🌟 **R² = {r2:.4f}** — Model SANGAT BAIK (menjelaskan {r2*100:.1f}% variansi data)")
+            st.success(f"🌟 **R² = {r2:.4f}** — Model SANGAT BAIK ({r2*100:.1f}% variansi)")
         elif r2 >= 0.7:
-            st.info(f"✅ **R² = {r2:.4f}** — Model BAIK (menjelaskan {r2*100:.1f}% variansi data)")
+            st.info(f"✅ **R² = {r2:.4f}** — Model BAIK ({r2*100:.1f}% variansi)")
         elif r2 >= 0.5:
-            st.warning(f"⚠️ **R² = {r2:.4f}** — Model CUKUP (menjelaskan {r2*100:.1f}% variansi data)")
+            st.warning(f"⚠️ **R² = {r2:.4f}** — Model CUKUP ({r2*100:.1f}% variansi)")
         else:
-            st.error(f"❌ **R² = {r2:.4f}** — Model KURANG BAIK (hanya menjelaskan {r2*100:.1f}% variansi data)")
+            st.error(f"❌ **R² = {r2:.4f}** — Model KURANG BAIK")
 
-        # Penjelasan metrics
-        with st.expander("📖 Penjelasan Metrics"):
-            st.markdown(
-                """
-                | Metric | Penjelasan | Semakin |
-                |--------|-----------|---------|
-                | **MAE** | Rata-rata error absolut | Kecil = bagus |
-                | **MSE** | Rata-rata error kuadrat | Kecil = bagus |
-                | **RMSE** | Akar dari MSE (satuan sama dengan target) | Kecil = bagus |
-                | **R²** | Proporsi variansi yang dijelaskan model | Mendekati 1 = bagus |
-                | **MAPE** | Rata-rata error dalam persen | Kecil = bagus |
-                """
-            )
-
-    else:  # Klasifikasi
-        # Metric cards
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.metric("🎯 Accuracy", f"{metrics['Accuracy']*100:.2f}%")
-        with col2:
-            st.metric("🎪 Precision", f"{metrics['Precision']*100:.2f}%")
-        with col3:
-            st.metric("🔍 Recall", f"{metrics['Recall']*100:.2f}%")
-        with col4:
-            st.metric("⚖️ F1-Score", f"{metrics['F1-Score']*100:.2f}%")
+    else:
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("🎯 Accuracy", f"{metrics['Accuracy']*100:.2f}%")
+        c2.metric("🎪 Precision", f"{metrics['Precision']*100:.2f}%")
+        c3.metric("🔍 Recall", f"{metrics['Recall']*100:.2f}%")
+        c4.metric("⚖️ F1-Score", f"{metrics['F1-Score']*100:.2f}%")
 
         st.divider()
-
-        # Interpretasi akurasi
         acc = metrics["Accuracy"]
         if acc >= 0.95:
-            st.success(f"🌟 **Akurasi = {acc*100:.2f}%** — Model SANGAT BAIK")
+            st.success(f"🌟 **Akurasi = {acc*100:.2f}%** — SANGAT BAIK")
         elif acc >= 0.85:
-            st.info(f"✅ **Akurasi = {acc*100:.2f}%** — Model BAIK")
+            st.info(f"✅ **Akurasi = {acc*100:.2f}%** — BAIK")
         elif acc >= 0.70:
-            st.warning(f"⚠️ **Akurasi = {acc*100:.2f}%** — Model CUKUP")
+            st.warning(f"⚠️ **Akurasi = {acc*100:.2f}%** — CUKUP")
         else:
-            st.error(f"❌ **Akurasi = {acc*100:.2f}%** — Model KURANG BAIK")
+            st.error(f"❌ **Akurasi = {acc*100:.2f}%** — KURANG BAIK")
 
-        # Classification Report
         st.markdown("### 📋 Classification Report")
-        target_names = st.session_state.target_names
-        report = classification_report(
-            y_test,
-            y_pred,
-            target_names=target_names,
-            output_dict=True,
-            zero_division=0,
-        )
+        report = classification_report(y_test, y_pred, target_names=target_names,
+                                       output_dict=True, zero_division=0)
         df_report = pd.DataFrame(report).transpose()
-        st.dataframe(
-            df_report.style.format("{:.4f}"),
-            use_container_width=True,
-        )
+        st.dataframe(df_report.style.format("{:.4f}"), use_container_width=True)
 
-        # Penjelasan metrics
-        with st.expander("📖 Penjelasan Metrics"):
-            st.markdown(
-                """
-                | Metric | Penjelasan | Semakin |
-                |--------|-----------|---------|
-                | **Accuracy** | Proporsi prediksi benar dari total | Mendekati 1 = bagus |
-                | **Precision** | Dari yang diprediksi positif, berapa yang benar | Mendekati 1 = bagus |
-                | **Recall** | Dari yang aktual positif, berapa yang berhasil diprediksi | Mendekati 1 = bagus |
-                | **F1-Score** | Harmonic mean Precision & Recall | Mendekati 1 = bagus |
-                """
-            )
+    st.divider()
+    st.markdown("### 🔄 Cross-Validation (5-Fold)")
+    cv_mean, cv_std = cv_score
+    c1, c2 = st.columns(2)
+    c1.metric("CV Score (Mean)", f"{cv_mean:.4f}")
+    c2.metric("CV Score (Std)", f"±{cv_std:.4f}")
+
+
+# ============================================================
+# TAB 3: DATABASE & RETRAIN
+# ============================================================
+with tab3:
+    st.subheader("🗄️ MongoDB CRUD & Retrain Model")
+
+    # Cek koneksi
+    client = get_mongo_client()
+
+    if client is None:
+        st.error(
+            "❌ **MongoDB tidak terhubung!**\n\n"
+            "Pastikan:\n"
+            "1. `pymongo` sudah terinstall: `pip install pymongo`\n"
+            "2. File `.streamlit/secrets.toml` ada dengan `MONGODB_URI`\n"
+            "3. IP sudah di-whitelist di MongoDB Atlas"
+        )
+        st.stop()
+
+    db = client["test_db"]
+    collection = db["iris_db"]
+
+    # --- Statistik ---
+    st.markdown("### 📊 Statistik Collection")
+    c1, c2, c3 = st.columns(3)
+    total = collection.count_documents({})
+    c1.metric("Total Dokumen", total)
+    c2.metric("Database", "test_db")
+    c3.metric("Collection", "iris_db")
 
     st.divider()
 
-    # ============ Cross-Validation ============
-    st.markdown("### 🔄 Cross-Validation (5-Fold)")
-    cv_mean, cv_std = cv_score
+    # --- Form Insert ---
+    st.markdown("### ➕ Tambah Data Iris")
+    with st.form("form_iris"):
+        c1, c2 = st.columns(2)
+        with c1:
+            sl = st.number_input("Sepal Length (cm)", 0.0, 10.0, 5.1, 0.1)
+            sw = st.number_input("Sepal Width (cm)", 0.0, 10.0, 3.5, 0.1)
+        with c2:
+            pl = st.number_input("Petal Length (cm)", 0.0, 10.0, 1.4, 0.1)
+            pw = st.number_input("Petal Width (cm)", 0.0, 10.0, 0.2, 0.1)
+        species = st.selectbox("Species", ["setosa", "versicolor", "virginica"])
 
-    col1, col2 = st.columns(2)
-    with col1:
-        st.metric("CV Score (Mean)", f"{cv_mean:.4f}")
-    with col2:
-        st.metric("CV Score (Std)", f"±{cv_std:.4f}")
+        submitted = st.form_submit_button("💾 Simpan ke MongoDB", type="primary")
 
+        if submitted:
+            collection.insert_one({
+                "sepal_length": float(sl),
+                "sepal_width": float(sw),
+                "petal_length": float(pl),
+                "petal_width": float(pw),
+                "species": species,
+                "timestamp": datetime.now(),
+            })
+            st.success("✅ Data berhasil disimpan!")
+            st.rerun()
+
+    st.divider()
+
+    # --- Tampilkan Data ---
+    st.markdown("### 📋 Data Iris di MongoDB")
+    data = list(collection.find().sort("timestamp", -1))
+
+    if not data:
+        st.info("📭 Belum ada data. Silakan tambah di atas.")
+    else:
+        df_mongo = pd.DataFrame(data)
+        df_display = df_mongo.copy()
+        df_display["_id"] = df_display["_id"].astype(str)
+        st.dataframe(df_display, use_container_width=True)
+
+        # --- Hapus ---
+        st.markdown("### 🗑️ Hapus Data")
+        c1, c2 = st.columns([3, 1])
+        with c1:
+            opsi = st.selectbox(
+                "Pilih ID:",
+                df_mongo["_id"].astype(str).tolist(),
+            )
+        with c2:
+            if st.button("🗑️ Hapus", type="secondary"):
+                collection.delete_one({"_id": ObjectId(opsi)})
+                st.success(f"✅ Dihapus: `{opsi[:12]}...`")
+                st.rerun()
+
+    st.divider()
+
+    # --- Retrain ---
+    st.markdown("### 🧠 Retrain Model dengan Data MongoDB")
     st.caption(
-        "Cross-validation membagi data jadi 5 bagian, training 5x, "
-        "dan rata-rata hasilnya. Std kecil = model stabil."
+        "Model akan digabung: **data sklearn (150)** + **data MongoDB**. "
+        "Cocok untuk melihat efek data tambahan."
     )
+
+    if st.button("🚀 Retrain Sekarang", type="primary"):
+        try:
+            # Data sklearn
+            iris = datasets.load_iris()
+            X_orig = iris.data
+            y_orig = iris.target
+
+            # Data MongoDB
+            df_new = pd.DataFrame(list(collection.find({}, {"_id": 0})))
+
+            if df_new.empty:
+                st.warning("⚠️ Tidak ada data MongoDB. Training dengan sklearn saja.")
+                X_comb, y_comb = X_orig, y_orig
+            else:
+                species_map = {"setosa": 0, "versicolor": 1, "virginica": 2}
+                df_new["target"] = df_new["species"].map(species_map)
+
+                if df_new["target"].isna().any():
+                    st.error("❌ Ada species tidak dikenal!")
+                    st.stop()
+
+                X_new = df_new[["sepal_length", "sepal_width",
+                                "petal_length", "petal_width"]].values
+                y_new = df_new["target"].values
+
+                X_comb = np.vstack([X_orig, X_new])
+                y_comb = np.hstack([y_orig, y_new])
+
+            X_tr, X_te, y_tr, y_te = train_test_split(
+                X_comb, y_comb, test_size=0.2, random_state=42
+            )
+
+            retrained = RandomForestClassifier(n_estimators=100, random_state=42)
+            retrained.fit(X_tr, y_tr)
+            y_pred_rt = retrained.predict(X_te)
+            acc_rt = accuracy_score(y_te, y_pred_rt)
+
+            st.success(f"✅ Model di-retrain! Akurasi: **{acc_rt*100:.2f}%**")
+
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Data sklearn", len(X_orig))
+            c2.metric("Data MongoDB", len(df_new) if not df_new.empty else 0)
+            c3.metric("Total Training", len(X_comb))
+
+            st.text("Classification Report:")
+            st.text(classification_report(y_te, y_pred_rt,
+                                          target_names=iris.target_names,
+                                          zero_division=0))
+
+            # Feature importance
+            imp_df = pd.DataFrame({
+                "Fitur": iris.feature_names,
+                "Importance": retrained.feature_importances_,
+            }).sort_values("Importance", ascending=False)
+            st.dataframe(imp_df, use_container_width=True)
+
+        except Exception as e:
+            st.error(f"❌ Error: {e}")
 
 
 # ============================================================
 # FOOTER
 # ============================================================
 st.divider()
-st.caption("🤖 Dibuat dengan ❤️ menggunakan Streamlit + scikit-learn")
-st.caption("📚 Dataset: toy datasets dari scikit-learn")
+st.caption("🤖 Dibuat dengan ❤️ menggunakan Streamlit + scikit-learn + MongoDB")
